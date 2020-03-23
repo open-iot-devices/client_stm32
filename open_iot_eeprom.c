@@ -1,9 +1,5 @@
-#include <string.h>
-#include <stdlib.h>
-
 #include "main.h"
 #include "open_iot.h"
-
 
 ///////////////////////////
 // EEPROM writer         //
@@ -42,7 +38,6 @@ uint32_t open_iot_eeprom_set_sequence_receive(struct open_iot_config *cfg, uint3
 uint32_t open_iot_eeprom_set_sequence_send(struct open_iot_config *cfg, uint32_t value)
 {
   uint32_t address = (uint32_t)cfg + offsetof(struct open_iot_config, sequence_send);
-
   return open_iot_write_eeprom(address, &value, 1);
 }
 

@@ -1,9 +1,6 @@
-#include <string.h>
-#include <stdlib.h>
 #include <pb_encode.h>
 #include <pb_decode.h>
 #include <openiot/system.pb.h>
-#include <aes.h>
 
 #include "main.h"
 #include "open_iot.h"
@@ -19,10 +16,10 @@ extern uint32_t open_iot_eeprom_set_aes_key(struct open_iot_config*, uint8_t*);
 
 // Boilerplates //
 static uint64_t dh_pow_mod(uint64_t g, uint64_t x, uint64_t p);
-static uint8_t* open_iot_write_message(struct open_iot*, uint32_t, const pb_msgdesc_t*, const void*, bool, bool, size_t*);
-static uint32_t open_iot_read_message(struct open_iot*, uint8_t*, size_t, uint32_t, const pb_msgdesc_t*, void*, bool, bool);
-
-
+static uint8_t* open_iot_write_messages(struct open_iot*, uint32_t, const pb_msgdesc_t*,
+                                        const void*, const pb_msgdesc_t*, const void*, bool, bool, size_t*);
+static uint32_t open_iot_read_message(struct open_iot*, uint8_t*, size_t, uint32_t,
+                                      const pb_msgdesc_t*, void*, bool, bool);
 
 ///////////////////////////
 // Inits / Helpers       //
@@ -75,13 +72,13 @@ uint8_t* open_iot_make_key_exchange_request(struct open_iot* iot, size_t *out_le
   req.encryption_type = iot->encryption;
   req.dh_a_count = AES_BLOCK_SIZE;
   for (uint32_t i = 0; i < req.dh_a_count; i++) {
-    // iot->dh_private_key[i] = HAL_GetTick();
-    iot->dh_private_key[i] = i;
+    iot->dh_private_key[i] = HAL_GetTick();
     req.dh_a[i] = dh_pow_mod(DH_G, iot->dh_private_key[i], DH_P);
   }
 
-  return open_iot_write_message(iot, EncryptionType_PLAIN,
-    KeyExchangeRequest_fields, &req,
+  return open_iot_write_messages(iot, EncryptionType_PLAIN,
+    KeyExchangeRequest_fields, &req,  // first message
+    NULL, NULL,     // second message
     true, false,    // key exchange, join request
     out_len);
 }
@@ -163,8 +160,9 @@ uint8_t* open_iot_make_join_request(struct open_iot* iot, size_t *out_len)
   req.default_handler.arg = iot;
   req.default_handler.funcs.encode = pb_join_request_string_cb;
 
-  return open_iot_write_message(iot, EncryptionType_PLAIN,
-    JoinRequest_fields, &req,
+  return open_iot_write_messages(iot, EncryptionType_PLAIN,
+    JoinRequest_fields, &req, // first message
+    NULL, NULL,     // second message
     false, true,    // key exchange, join request
     out_len);
 }
@@ -186,55 +184,99 @@ void open_iot_process_join_response(struct open_iot* iot, uint8_t* payload, size
   iot->set_sequence_receive(iot->config, 0);
 }
 
+///////////////////////////
+// Custom Messages       //
+///////////////////////////
+static bool pb_message_info_string_cb(pb_ostream_t* stream, const pb_field_t* field, void* const* arg)
+{
+  const char* name = *arg;
+  if (field->tag == MessageInfo_proto_name_tag) {
+    if (!pb_encode_tag_for_field(stream, field)) {
+      return false;
+    }
+    return pb_encode_string(stream, (uint8_t*)name, strlen(name));
+  }
+  return false;
+}
+
+uint8_t* open_iot_make_custom_message(struct open_iot* iot,
+    const char* name, const pb_msgdesc_t *pb_fields, const void *pb_struct, size_t* out_len)
+{
+  // Get/Inc sequence
+  uint32_t seq = iot->config->sequence_send + 1;
+  iot->error = iot->set_sequence_send(iot->config, seq);
+  if (iot->error != OPEN_IOT_OK) {
+    *out_len = 0;
+    return NULL;
+  }
+
+  // Prepare message info
+  MessageInfo info = MessageInfo_init_zero;
+  info.sequence = seq;
+  info.proto_name.arg = (void*)name;
+  info.proto_name.funcs.encode = pb_message_info_string_cb;
+
+  // Write all 2 messages
+  return open_iot_write_messages(iot, iot->encryption,
+    MessageInfo_fields, &info, // first message
+    pb_fields, pb_struct,     // second message
+    false, false,    // key exchange, join request
+    out_len);
+}
 
 ///////////////////////////
 // Boilerplaces          //
 ///////////////////////////
 
-static uint8_t* open_iot_write_message(
+static uint8_t* open_iot_write_messages(
     struct open_iot* iot, uint32_t encryption,
-    const pb_msgdesc_t *pb_fields, const void *pb_struct,
+    const pb_msgdesc_t *pb_fields1, const void *pb_struct1,
+    const pb_msgdesc_t *pb_fields2, const void *pb_struct2,
     bool key_exchange, bool join_request,
     size_t *out_len)
 {
-  // Serialize Message
-  pb_ostream_t stream1 = pb_ostream_from_buffer(iot->buffer1, MAX_MESSAGE_SIZE);
-  bool res = pb_encode_delimited(&stream1, pb_fields, pb_struct);
+  // Serialize First Message
+  pb_ostream_t stream = pb_ostream_from_buffer(iot->buffer1, MAX_MESSAGE_SIZE);
+  bool res = pb_encode_delimited(&stream, pb_fields1, pb_struct1);
+  // Serialize Second Message (if provided)
+  if (pb_struct2 != NULL && res) {
+    res = pb_encode_delimited(&stream, pb_fields2, pb_struct2);
+  }
   if (!res) {
     iot->error = OPEN_IOT_PB_ENCODE_FAILED;
     return NULL;
   }
-  size_t message_len = stream1.bytes_written;
+  size_t messages_len = stream.bytes_written;
 
   // Optionally encrypt it
-  switch (encryption) {
-  case EncryptionType_PLAIN:
-    break;
-  case EncryptionType_AES_ECB:
-    // struct AES_ctx ctx;
-    // AES_init_ctx(&ctx, iot->config->aes_key);
-    // AES_ECB_encrypt
-    break;
-  }
+  // switch (encryption) {
+  // case EncryptionType_PLAIN:
+  //   break;
+  // case EncryptionType_AES_ECB:
+  //   // struct AES_ctx ctx;
+  //   // AES_init_ctx(&ctx, iot->config->aes_key);
+  //   // AES_ECB_encrypt
+  //   break;
+  // }
 
   // Prepare message header
   Header hdr = Header_init_zero;
   hdr.device_id = iot->device_id;
   hdr.key_exchange = key_exchange;
   hdr.join_request = join_request;
-  hdr.crc = ~HAL_CRC_Calculate(&hcrc, (uint32_t*)iot->buffer1, message_len);
+  hdr.crc = ~HAL_CRC_Calculate(&hcrc, (uint32_t*)iot->buffer1, messages_len);
 
   // Serialize Header message
-  pb_ostream_t stream2 = pb_ostream_from_buffer(iot->buffer2, MAX_MESSAGE_SIZE);
-  res = pb_encode_delimited(&stream2, Header_fields, &hdr);
+  stream = pb_ostream_from_buffer(iot->buffer2, MAX_MESSAGE_SIZE);
+  res = pb_encode_delimited(&stream, Header_fields, &hdr);
   if (!res) {
     iot->error = OPEN_IOT_PB_ENCODE_FAILED;
     return NULL;
   }
+  // Copy Messages right after Header
+  memcpy(&iot->buffer2[stream.bytes_written], iot->buffer1, messages_len);
+  *out_len = stream.bytes_written + messages_len;
 
-  // Copy Message right after Header
-  memcpy(&iot->buffer2[stream2.bytes_written], iot->buffer1, message_len);
-  *out_len = stream2.bytes_written + message_len;
   return iot->buffer2;
 }
 

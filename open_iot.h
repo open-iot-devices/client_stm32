@@ -1,6 +1,8 @@
 #ifndef __OPEN_IOT_H
 #define __OPEN_IOT_H
 
+#include <pb.h>
+
 #define MAX_MESSAGE_SIZE                 256
 #define AES_BLOCK_SIZE                   16
 
@@ -75,6 +77,8 @@ struct open_iot {
 void     open_iot_init_eeprom(struct open_iot*, uint32_t eeprom_address);
 uint8_t* open_iot_make_key_exchange_request(struct open_iot*, size_t* len);
 uint8_t* open_iot_make_join_request(struct open_iot*, size_t *out_len);
+uint8_t* open_iot_make_custom_message(struct open_iot*, const char* name, const pb_msgdesc_t *pb_fields,
+                                      const void *pb_struct, size_t* len);
 
 void     open_iot_process_key_exchange_response(struct open_iot*, uint8_t* payload, size_t len);
 void     open_iot_process_join_response(struct open_iot*, uint8_t* payload, size_t len);
