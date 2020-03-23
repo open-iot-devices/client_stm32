@@ -64,6 +64,7 @@ struct open_iot {
     const char* manufacturer;
     const char* product_url;
     const char* default_handler;
+    const char* protobuf_name;
 
     // Functions to work with permanent configuration, usually EEPROM/FLASH
     uint32_t (*set_sequence_receive)(struct open_iot_config*, uint32_t sequence);
@@ -77,8 +78,9 @@ struct open_iot {
 void     open_iot_init_eeprom(struct open_iot*, uint32_t eeprom_address);
 uint8_t* open_iot_make_key_exchange_request(struct open_iot*, size_t* len);
 uint8_t* open_iot_make_join_request(struct open_iot*, size_t *out_len);
-uint8_t* open_iot_make_custom_message(struct open_iot*, const char* name, const pb_msgdesc_t *pb_fields,
-                                      const void *pb_struct, size_t* len);
+uint8_t* open_iot_make_custom_message(struct open_iot*,
+                                      const pb_msgdesc_t *pb_fields, const void *pb_struct,
+                                      size_t* len);
 
 void     open_iot_process_key_exchange_response(struct open_iot*, uint8_t* payload, size_t len);
 void     open_iot_process_join_response(struct open_iot*, uint8_t* payload, size_t len);

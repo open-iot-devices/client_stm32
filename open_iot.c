@@ -131,6 +131,9 @@ static bool pb_join_request_string_cb(pb_ostream_t* stream, const pb_field_t* fi
   case JoinRequest_default_handler_tag:
     buffer = iot->default_handler;
     break;
+  case JoinRequest_protobuf_name_tag:
+    buffer = iot->protobuf_name;
+    break;
   default:
     return false;
   }
@@ -159,6 +162,8 @@ uint8_t* open_iot_make_join_request(struct open_iot* iot, size_t *out_len)
   req.product_url.funcs.encode = pb_join_request_string_cb;
   req.default_handler.arg = iot;
   req.default_handler.funcs.encode = pb_join_request_string_cb;
+  req.protobuf_name.arg = iot;
+  req.protobuf_name.funcs.encode = pb_join_request_string_cb;
 
   return open_iot_write_messages(iot, EncryptionType_PLAIN,
     JoinRequest_fields, &req, // first message
@@ -187,20 +192,8 @@ void open_iot_process_join_response(struct open_iot* iot, uint8_t* payload, size
 ///////////////////////////
 // Custom Messages       //
 ///////////////////////////
-static bool pb_message_info_string_cb(pb_ostream_t* stream, const pb_field_t* field, void* const* arg)
-{
-  const char* name = *arg;
-  if (field->tag == MessageInfo_proto_name_tag) {
-    if (!pb_encode_tag_for_field(stream, field)) {
-      return false;
-    }
-    return pb_encode_string(stream, (uint8_t*)name, strlen(name));
-  }
-  return false;
-}
-
 uint8_t* open_iot_make_custom_message(struct open_iot* iot,
-    const char* name, const pb_msgdesc_t *pb_fields, const void *pb_struct, size_t* out_len)
+    const pb_msgdesc_t *pb_fields, const void *pb_struct, size_t* out_len)
 {
   // Get/Inc sequence
   uint32_t seq = iot->config->sequence_send + 1;
@@ -213,8 +206,6 @@ uint8_t* open_iot_make_custom_message(struct open_iot* iot,
   // Prepare message info
   MessageInfo info = MessageInfo_init_zero;
   info.sequence = seq;
-  info.proto_name.arg = (void*)name;
-  info.proto_name.funcs.encode = pb_message_info_string_cb;
 
   // Write all 2 messages
   return open_iot_write_messages(iot, iot->encryption,
