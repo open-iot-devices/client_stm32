@@ -13,6 +13,10 @@ extern uint32_t open_iot_eeprom_set_sequence_receive(struct open_iot_config*, ui
 extern uint32_t open_iot_eeprom_set_sequence_send(struct open_iot_config*, uint32_t);
 extern uint32_t open_iot_eeprom_set_joined(struct open_iot_config*, uint32_t);
 extern uint32_t open_iot_eeprom_set_aes_key(struct open_iot_config*, uint8_t*);
+extern uint32_t open_iot_eeprom_set_key_exchange(struct open_iot_config *cfg, uint32_t state);
+
+// Encrypt functions //
+extern uint32_t aes_ecb_encrypt_blocks(uint8_t* key, uint8_t* dst, uint8_t* src, size_t len);
 
 // Boilerplates //
 static uint64_t dh_pow_mod(uint64_t g, uint64_t x, uint64_t p);
@@ -35,6 +39,16 @@ uint32_t open_iot_is_joined(struct open_iot* iot)
   return iot->config->joined;
 }
 
+uint32_t open_iot_is_key_exchange_complete(struct open_iot* iot)
+{
+  return iot->config->key_exchange_complete;
+}
+
+uint32_t open_iot_set_key_exchange_complete(struct open_iot* iot, uint32_t value)
+{
+  return iot->set_key_exchange_complete(iot->config, value);
+}
+
 void open_iot_set_joined(struct open_iot* iot, uint32_t value)
 {
   iot->set_joined(iot->config, value);
@@ -53,6 +67,7 @@ void open_iot_init_eeprom(struct open_iot* iot, uint32_t eeprom_address)
   iot->set_sequence_receive = open_iot_eeprom_set_sequence_receive;
   iot->set_sequence_send = open_iot_eeprom_set_sequence_send;
   iot->set_joined = open_iot_eeprom_set_joined;
+  iot->set_key_exchange_complete = open_iot_eeprom_set_key_exchange;
   iot->set_aes_key = open_iot_eeprom_set_aes_key;
 }
 
@@ -106,6 +121,7 @@ void open_iot_process_key_exchange_response(struct open_iot* iot, uint8_t* paylo
   for (uint32_t i = 0; i < AES_BLOCK_SIZE; i++) {
     key[i] = dh_pow_mod(resp.dh_b[i], iot->dh_private_key[i], DH_P);
   }
+  iot->set_key_exchange_complete(iot->config, 1);
   iot->error = iot->set_aes_key(iot->config, key);
 }
 
@@ -165,7 +181,7 @@ uint8_t* open_iot_make_join_request(struct open_iot* iot, size_t *out_len)
   req.protobuf_name.arg = iot;
   req.protobuf_name.funcs.encode = pb_join_request_string_cb;
 
-  return open_iot_write_messages(iot, EncryptionType_PLAIN,
+  return open_iot_write_messages(iot, iot->encryption,
     JoinRequest_fields, &req, // first message
     NULL, NULL,     // second message
     false, true,    // key exchange, join request
@@ -177,7 +193,7 @@ void open_iot_process_join_response(struct open_iot* iot, uint8_t* payload, size
   JoinResponse resp = JoinResponse_init_zero;
 
   iot->error = open_iot_read_message(iot, payload, payload_len,
-      EncryptionType_PLAIN,
+      iot->encryption,
       JoinResponse_fields, &resp,
       false, true);  // key exchange, join request
   if (iot->error != OPEN_IOT_OK) {
@@ -239,36 +255,42 @@ static uint8_t* open_iot_write_messages(
   }
   size_t messages_len = stream.bytes_written;
 
-  // Optionally encrypt it
-  // switch (encryption) {
-  // case EncryptionType_PLAIN:
-  //   break;
-  // case EncryptionType_AES_ECB:
-  //   // struct AES_ctx ctx;
-  //   // AES_init_ctx(&ctx, iot->config->aes_key);
-  //   // AES_ECB_encrypt
-  //   break;
-  // }
+  uint8_t* encoded_messages = iot->buffer1;
+  uint8_t* second_buffer = iot->buffer2;
+
+  if (encryption == EncryptionType_AES_ECB) {
+    // Align to AES block size
+    if ((messages_len % AES_BLOCK_SIZE != 0)) {
+      messages_len += AES_BLOCK_SIZE - (messages_len % AES_BLOCK_SIZE);
+    }
+    res = aes_ecb_encrypt_blocks(iot->config->aes_key, iot->buffer2, iot->buffer1, messages_len);
+    if (res != OPEN_IOT_OK) {
+      iot->error = OPEN_IOT_AES_ENCODE_FAILED;
+      return NULL;
+    }
+    encoded_messages = iot->buffer2;
+    second_buffer = iot->buffer1;
+  }
 
   // Prepare message header
   Header hdr = Header_init_zero;
   hdr.device_id = iot->device_id;
   hdr.key_exchange = key_exchange;
   hdr.join_request = join_request;
-  hdr.crc = ~HAL_CRC_Calculate(&hcrc, (uint32_t*)iot->buffer1, messages_len);
+  hdr.crc = ~HAL_CRC_Calculate(&hcrc, (uint32_t*)encoded_messages, messages_len);
 
   // Serialize Header message
-  stream = pb_ostream_from_buffer(iot->buffer2, MAX_MESSAGE_SIZE);
+  stream = pb_ostream_from_buffer(second_buffer, MAX_MESSAGE_SIZE);
   res = pb_encode_delimited(&stream, Header_fields, &hdr);
   if (!res) {
     iot->error = OPEN_IOT_PB_ENCODE_FAILED;
     return NULL;
   }
   // Copy Messages right after Header
-  memcpy(&iot->buffer2[stream.bytes_written], iot->buffer1, messages_len);
+  memcpy(&second_buffer[stream.bytes_written], encoded_messages, messages_len);
   *out_len = stream.bytes_written + messages_len;
 
-  return iot->buffer2;
+  return second_buffer;
 }
 
 static uint32_t open_iot_read_message(

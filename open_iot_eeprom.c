@@ -48,6 +48,13 @@ uint32_t open_iot_eeprom_set_joined(struct open_iot_config *cfg, uint32_t joined
   return open_iot_write_eeprom(address, &joined, 1);
 }
 
+uint32_t open_iot_eeprom_set_key_exchange(struct open_iot_config *cfg, uint32_t state)
+{
+  uint32_t address = (uint32_t)cfg + offsetof(struct open_iot_config, key_exchange_complete);
+
+  return open_iot_write_eeprom(address, &state, 1);
+}
+
 uint32_t open_iot_eeprom_set_aes_key(struct open_iot_config *cfg, uint8_t *key)
 {
   uint32_t address = (uint32_t)cfg + offsetof(struct open_iot_config, aes_key);
