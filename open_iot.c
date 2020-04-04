@@ -239,6 +239,20 @@ uint8_t* open_iot_make_custom_message(struct open_iot* iot,
     out_len);
 }
 
+void open_iot_process_custom_message(struct open_iot* iot,
+    const pb_msgdesc_t *pb_fields, void *pb_struct,
+    uint8_t* payload, size_t payload_len)
+{
+  MessageInfo info = MessageInfo_init_zero;
+
+  iot->error = open_iot_read_messages(iot, payload, payload_len,
+      iot->encryption,
+      MessageInfo_fields, &info,  // msg1
+      pb_fields, pb_struct,  // msg2
+      false, false);  // no key exchange, no join request
+  // check seq
+}
+
 ///////////////////////////
 // Boilerplaces          //
 ///////////////////////////
@@ -355,7 +369,7 @@ static uint32_t open_iot_read_messages(
   }
   // And second, if provided
   if (pb_fields2 != NULL) {
-    res = pb_decode_delimited(&istream, pb_fields1, pb_struct1);
+    res = pb_decode_delimited(&istream, pb_fields2, pb_struct2);
     if (!res) {
       return OPEN_IOT_PB_DECODE_FAILED;
     }

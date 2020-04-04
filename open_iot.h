@@ -88,6 +88,9 @@ uint8_t* open_iot_make_custom_message(struct open_iot*,
 
 void     open_iot_process_key_exchange_response(struct open_iot*, uint8_t* payload, size_t len);
 void     open_iot_process_join_response(struct open_iot*, uint8_t* payload, size_t len);
+void     open_iot_process_custom_message(struct open_iot*,
+                                         const pb_msgdesc_t *pb_fields, void *pb_struct,
+                                         uint8_t* payload, size_t payload_len);
 
 uint32_t open_iot_is_joined(struct open_iot*);
 uint32_t open_iot_is_key_exchange_complete(struct open_iot*);
