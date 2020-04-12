@@ -4,9 +4,10 @@
 
 #include "main.h"
 #include "open_iot.h"
+#include "app.h"
 
-// Forward declarations //
-extern CRC_HandleTypeDef hcrc;
+// SW implementation of CRC32
+#include "crc32.c"
 
 // Config functions //
 extern uint32_t open_iot_eeprom_set_sequence_receive(struct open_iot_config*, uint32_t);
@@ -93,7 +94,7 @@ uint8_t* open_iot_make_key_exchange_request(struct open_iot* iot, size_t *out_le
   req.encryption_type = iot->encryption;
   req.dh_a_count = AES_BLOCK_SIZE;
   for (uint32_t i = 0; i < req.dh_a_count; i++) {
-    iot->dh_private_key[i] = HAL_GetTick();
+    iot->dh_private_key[i] = HAL_GetTick() + i;
     req.dh_a[i] = dh_pow_mod(DH_G, iot->dh_private_key[i], DH_P);
   }
 
@@ -300,8 +301,12 @@ static uint8_t* open_iot_write_messages(
   hdr.device_id = iot->device_id;
   hdr.key_exchange = key_exchange;
   hdr.join_request = join_request;
+#ifdef HAL_CRC_MODULE_ENABLED
+  extern CRC_HandleTypeDef hcrc;
   hdr.crc = ~HAL_CRC_Calculate(&hcrc, (uint32_t*)encoded_messages, messages_len);
-
+#else
+  hdr.crc = openiot_crc32(encoded_messages, messages_len);
+#endif
   // Serialize Header message
   stream = pb_ostream_from_buffer(second_buffer, MAX_MESSAGE_SIZE);
   res = pb_encode_delimited(&stream, Header_fields, &hdr);
@@ -343,7 +348,13 @@ static uint32_t open_iot_read_messages(
   // Check CRC
   size_t msgs_len = istream.bytes_left;
   size_t hdr_len = payload_len - msgs_len;
-  uint32_t crc = ~HAL_CRC_Calculate(&hcrc, (uint32_t*)&payload[hdr_len], istream.bytes_left);
+  uint32_t crc;
+#ifdef HAL_CRC_MODULE_ENABLED
+  extern CRC_HandleTypeDef hcrc;
+  crc = ~HAL_CRC_Calculate(&hcrc, (uint32_t*)&payload[hdr_len], istream.bytes_left);
+#else
+  crc = openiot_crc32(&payload[hdr_len], istream.bytes_left);
+#endif
   if (hdr.crc != crc) {
     return OPEN_IOT_CRC_FAILED;
   }
@@ -353,7 +364,7 @@ static uint32_t open_iot_read_messages(
     if (istream.bytes_left % AES_BLOCK_SIZE != 0) {
       return OPEN_IOT_AES_INVALID_BLOCK_SIZE;
     }
-    // Copy payload to u32 aligned buffer (to make HW AES happy)
+    // Copy payload to u32 aligned buffer (to make HW AES happy, alignment problem)
     memcpy(iot->buffer1, &payload[hdr_len], msgs_len);
     int eres = aes_ecb_decrypt_blocks(iot->config->aes_key, iot->buffer2, iot->buffer1, msgs_len);
     if (eres != OPEN_IOT_OK) {
