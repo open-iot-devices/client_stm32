@@ -69,6 +69,10 @@ struct open_iot {
     const char* default_handler;
     const char* protobuf_name;
 
+    // Date/Time received from server on any control message
+    uint32_t server_date_bcd;
+    uint32_t server_time_bcd;
+
     // Functions to work with permanent configuration, usually EEPROM/FLASH
     uint32_t (*set_sequence_receive)(struct open_iot_config*, uint32_t sequence);
     uint32_t (*set_sequence_send)(struct open_iot_config*, uint32_t sequence);

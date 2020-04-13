@@ -252,6 +252,9 @@ void open_iot_process_custom_message(struct open_iot* iot,
       pb_fields, pb_struct,  // msg2
       false, false);  // no key exchange, no join request
   // check seq
+  // update date/time
+  iot->server_date_bcd = info.date;
+  iot->server_time_bcd = info.time;
 }
 
 ///////////////////////////
