@@ -69,6 +69,7 @@ void open_iot_init_eeprom(struct open_iot* iot, uint32_t eeprom_address)
   iot->config = (void*)eeprom_address;
   iot->error = OPEN_IOT_OK;
   iot->encryption = EncryptionType_PLAIN;
+  iot->update_rtc_with_server_time = true;
 
   // Setup function pointers
   iot->set_sequence_receive = open_iot_eeprom_set_sequence_receive;
@@ -251,10 +252,27 @@ void open_iot_process_custom_message(struct open_iot* iot,
       MessageInfo_fields, &info,  // msg1
       pb_fields, pb_struct,  // msg2
       false, false);  // no key exchange, no join request
-  // check seq
-  // update date/time
+  // TODO: check seq
+  // save/update RTC
   iot->server_date_bcd = info.date;
   iot->server_time_bcd = info.time;
+#ifdef HAL_RTC_MODULE_ENABLED
+  if (iot->update_rtc_with_server_time) {
+    RTC_TimeTypeDef time = {0};
+    RTC_DateTypeDef date = {0};
+    time.Hours = iot->server_time_bcd >> 16;
+    time.Minutes = (iot->server_time_bcd >> 8) & 0xff;
+    time.Seconds = iot->server_time_bcd & 0xff;
+    time.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
+    time.StoreOperation = RTC_STOREOPERATION_RESET;
+    date.WeekDay = iot->server_date_bcd & 0xff;
+    date.Month = (iot->server_time_bcd >> 16) & 0xff;
+    date.Date = (iot->server_time_bcd >> 8) & 0xff;
+    date.Year = iot->server_time_bcd >> 24;
+    HAL_RTC_SetTime(&hrtc, &time, RTC_FORMAT_BCD);
+    HAL_RTC_SetDate(&hrtc, &date, RTC_FORMAT_BCD);
+  }
+#endif
 }
 
 ///////////////////////////

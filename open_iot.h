@@ -72,6 +72,7 @@ struct open_iot {
     // Date/Time received from server on any control message
     uint32_t server_date_bcd;
     uint32_t server_time_bcd;
+    bool     update_rtc_with_server_time;
 
     // Functions to work with permanent configuration, usually EEPROM/FLASH
     uint32_t (*set_sequence_receive)(struct open_iot_config*, uint32_t sequence);
